@@ -2,6 +2,10 @@
 #include "ParamIDs.h"
 #include "PluginEditor.h"
 
+#ifndef JucePlugin_Name
+#define JucePlugin_Name "3D Reverb"
+#endif
+
 static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -57,10 +61,10 @@ PluginProcessor::PluginProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
     , apvts (*this, &undoManager, "Parameters", createParameterLayout())
 {
-    auto castParameter = [&a = this->apvts]<typename T> (juce::StringRef paramID, T& destination)
+    auto castParameter = [this](juce::StringRef paramID, auto& destination)
     {
-        destination = dynamic_cast<T> (a.getParameter (paramID));
-        jassert (destination != nullptr);
+        destination = dynamic_cast<std::remove_reference_t<decltype(destination)>>(apvts.getParameter(paramID));
+        jassert(destination != nullptr);
     };
 
     castParameter (ParamIDs::size, size);
@@ -167,6 +171,27 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 {
     juce::ignoreUnused (midiMessages);
     juce::ScopedNoDenormals noDenormals;
+
+    // Check if buffer is silent
+    bool isSilent = true;
+    if (buffer.getNumChannels() > 0)
+    {
+        const float* channelData = buffer.getReadPointer(0);
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        {
+            if (std::abs(channelData[i]) > 1.0e-6f)
+            {
+                isSilent = false;
+                break;
+            }
+        }
+        
+        // Only send data to analyzer if not silent
+        if (!isSilent)
+        {
+            analyzer.pushBuffer(buffer.getReadPointer(0), buffer.getNumSamples());
+        }
+    }
 
     updateReverbParams();
 

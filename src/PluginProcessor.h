@@ -2,6 +2,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <juce_audio_utils/juce_audio_utils.h>
+#include "ui/SpectrumAnalyzer.h"
 
 class PluginProcessor final : public juce::AudioProcessor
 {
@@ -35,6 +37,7 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState& getPluginState();
+    SpectrumAnalyzer& getAnalyzer() { return analyzer; }
 
     // Make public
     juce::AudioParameterFloat* damp { nullptr };
@@ -53,6 +56,7 @@ private:
     juce::dsp::Reverb reverb;
 
     juce::UndoManager undoManager;
+    SpectrumAnalyzer analyzer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

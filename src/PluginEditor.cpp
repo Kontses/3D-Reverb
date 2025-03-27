@@ -18,6 +18,7 @@ PluginEditor::PluginEditor (PluginProcessor& p, juce::UndoManager& um)
     editorContent.setSize (defaultWidth, defaultHeight);
 
     addAndMakeVisible (editorContent);
+    addAndMakeVisible (processor.getAnalyzer());
 
     // Initialize the text boxes
     textBox1.setMultiLine (false);
@@ -76,20 +77,43 @@ PluginEditor::PluginEditor (PluginProcessor& p, juce::UndoManager& um)
     addAndMakeVisible (unitLabel3);
 }
 
-void PluginEditor::paint (juce::Graphics& g) { g.fillAll (MyColours::black); }
+void PluginEditor::paint (juce::Graphics& g) 
+{ 
+    g.fillAll (MyColours::black);
+}
 
 void PluginEditor::resized()
 {
     const auto factor = static_cast<float> (getWidth()) / defaultWidth;
     editorContent.setTransform (juce::AffineTransform::scale (factor));
 
+    // Calculate positions
+    const int visualizerHeight = 250;
+    const int spacing = 20;
+    const int contentHeight = 180;
+    const int textBoxesHeight = 120;  // Total height needed for text boxes
+    
+    // Calculate total available height
+    const int totalNeededHeight = visualizerHeight + spacing + contentHeight + textBoxesHeight + spacing;
+    
+    // Adjust window height if needed
+    if (getHeight() < totalNeededHeight)
+    {
+        setSize(getWidth(), totalNeededHeight);
+    }
+    
+    // Position the visualizer with some margin from top
+    processor.getAnalyzer().setBounds(0, spacing, getWidth(), visualizerHeight);
+
+    // Position the editor content (knobs) below the visualizer with spacing
+    editorContent.setBounds(0, visualizerHeight + spacing, getWidth(), contentHeight);
+
     // Set the bounds of the text boxes and labels
     const int labelWidth = 80;
     const int textBoxHeight = 30;
     const int textBoxSpacing = 10;
-    const int unitLabelWidth = 80; // Adjusted width to ensure enough space
-    const int totalTextBoxHeight = 3 * textBoxHeight + 2 * textBoxSpacing;
-    const int textBoxY = getHeight() - totalTextBoxHeight - textBoxSpacing;
+    const int unitLabelWidth = 80;
+    const int textBoxY = getHeight() - textBoxesHeight - spacing;
 
     label1.setBounds (10, textBoxY, labelWidth, textBoxHeight);
     textBox1.setBounds (10 + labelWidth + 10, textBoxY, getWidth() - labelWidth - unitLabelWidth - 40, textBoxHeight);

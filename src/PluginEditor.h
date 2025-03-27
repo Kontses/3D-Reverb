@@ -26,7 +26,7 @@ private:
     EditorContent editorContent;
 
     static constexpr auto defaultWidth { 560 };
-    static constexpr auto defaultHeight { 360 };
+    static constexpr auto defaultHeight { 540 };
 
     struct SharedLnf
     {

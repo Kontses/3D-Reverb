@@ -2,7 +2,7 @@
 
 This is a simple reverb plugin made with the JUCE DSP module.
 
-<img alt="Screenshot 2024-04-02 at 17 33 04" src="https://github.com/szkkng/simple-reverb/assets/61953352/d00f4fbd-04db-4e4c-9eb9-2e3c77c37d0b">
+<img alt="Screenshot 2024-04-02 at 17 33 04" src="">
 
 ## UI Manual
 
@@ -16,8 +16,8 @@ This is a simple reverb plugin made with the JUCE DSP module.
 ## Building
 
 ```
-$ git clone --recurse-submodules https://github.com/szkkng/simple-reverb.git
-$ cd simple-reverb
+$ git clone --recurse-submodules https://github.com/Kontses/3D-Reverb.git
+$ cd 3D-Reverb
 $ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 $ cmake --build build --config Release
 ```
