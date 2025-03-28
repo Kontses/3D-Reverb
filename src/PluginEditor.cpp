@@ -102,8 +102,8 @@ void PluginEditor::resized()
         setSize(getWidth(), totalNeededHeight);
     }
     
-    // Position the visualizer with some margin from top
-    processor.getAnalyzer().setBounds(0, spacing, getWidth(), visualizerHeight);
+    // Position the visualizer at the top with no margin
+    processor.getAnalyzer().setBounds(0, 0, getWidth(), visualizerHeight);
 
     // Position the editor content (knobs) below the visualizer with spacing
     editorContent.setBounds(0, visualizerHeight + spacing, getWidth(), contentHeight);

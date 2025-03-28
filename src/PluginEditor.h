@@ -1,65 +1,56 @@
 #pragma once
 
+#include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 #include "ui/EditorContent.h"
-#include "ui/EditorLnf.h"
-#include "ui/NumericInputFilter.h"
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_gui_basics/juce_gui_basics.h>
+#include "ui/MyColours.h"
+#include "ui/CustomLookAndFeel.h"
 
-class PluginEditor final : public juce::AudioProcessorEditor, public juce::TextEditor::Listener
+class PluginEditor : public juce::AudioProcessorEditor,
+                    private juce::TextEditor::Listener
 {
 public:
-    PluginEditor (PluginProcessor& p, juce::UndoManager& um);
-    ~PluginEditor(); 
+    PluginEditor (PluginProcessor&, juce::UndoManager&);
+    ~PluginEditor() override
+    {
+        // Remove listeners before destruction
+        textBox1.removeListener(this);
+        textBox2.removeListener(this);
+        textBox3.removeListener(this);
+        
+        // Remove components from the editor
+        removeChildComponent(&editorContent);
+        removeChildComponent(&processor.getAnalyzer());
+        
+        // Clear any references
+        dampDial.setLookAndFeel(nullptr);
+        sizeDial.setLookAndFeel(nullptr);
+        widthDial.setLookAndFeel(nullptr);
+    }
 
+    void paint (juce::Graphics&) override;
     void resized() override;
-    void paint (juce::Graphics& g) override;
-    void textEditorTextChanged (juce::TextEditor& editor) override;
-
-    bool keyPressed (const juce::KeyPress& k) override;
+    bool keyPressed (const juce::KeyPress&) override;
 
 private:
+    void textEditorTextChanged (juce::TextEditor&) override;
+
+    static constexpr int defaultWidth = 800;
+    static constexpr int defaultHeight = 500;
+
     PluginProcessor& processor;
     juce::UndoManager& undoManager;
-
     EditorContent editorContent;
 
-    static constexpr auto defaultWidth { 560 };
-    static constexpr auto defaultHeight { 540 };
+    juce::TextEditor textBox1, textBox2, textBox3;
+    juce::Label label1, label2, label3;
+    juce::Label unitLabel1, unitLabel2, unitLabel3;
+    juce::NumericInputFilter numericInputFilter;
 
-    struct SharedLnf
-    {
-        SharedLnf() { juce::LookAndFeel::setDefaultLookAndFeel (&editorLnf); }
-        ~SharedLnf() { juce::LookAndFeel::setDefaultLookAndFeel (nullptr); }
-
-        EditorLnf editorLnf;
-    };
-
-    juce::SharedResourcePointer<SharedLnf> lnf;
-
-    // Declare the text boxes
-    juce::TextEditor textBox1;
-    juce::TextEditor textBox2;
-    juce::TextEditor textBox3;
-
-    // Declare the labels
-    juce::Label label1;
-    juce::Label label2;
-    juce::Label label3;
-
-    // Declare the additional labels
-    juce::Label unitLabel1;
-    juce::Label unitLabel2;
-    juce::Label unitLabel3;
-
-    // Declare the input filter
-    NumericInputFilter numericInputFilter { 0.0f, 100.0f, 2 };
-
-    // Add a reference to the dampDial
-    Dial& dampDial;
-    Dial& sizeDial;
-    Dial& widthDial;
+    // References to the dials
+    juce::Slider& dampDial;
+    juce::Slider& sizeDial;
+    juce::Slider& widthDial;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

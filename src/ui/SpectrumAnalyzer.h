@@ -28,15 +28,21 @@ public:
 
     ~SpectrumAnalyzer() override
     {
+        // Stop timer before cleanup
         stopTimer();
         
-        // Clear all buffers safely
+        // Acquire lock to ensure no timer callback is running
         const juce::SpinLock::ScopedLockType lock(mutex);
+        
+        // Clear all buffers
         fifo.clear();
         fftData.clear();
         scopeData.clear();
         freqPoints.clear();
-        previousScope.clear();
+        
+        // Make sure we're not processing anything
+        nextFFTBlockReady = false;
+        fifoIndex = 0;
     }
 
     void pushBuffer(const float* data, int numSamples)
