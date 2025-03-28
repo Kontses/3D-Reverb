@@ -135,6 +135,7 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     spec.numChannels = static_cast<juce::uint32> (getTotalNumOutputChannels());
 
     reverb.prepare (spec);
+    analyzer.setSampleRate(static_cast<float>(sampleRate));
 }
 
 void PluginProcessor::releaseResources()
@@ -172,32 +173,18 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     juce::ignoreUnused (midiMessages);
     juce::ScopedNoDenormals noDenormals;
 
-    // Check if buffer is silent
-    bool isSilent = true;
-    if (buffer.getNumChannels() > 0)
-    {
-        const float* channelData = buffer.getReadPointer(0);
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
-        {
-            if (std::abs(channelData[i]) > 1.0e-6f)
-            {
-                isSilent = false;
-                break;
-            }
-        }
-        
-        // Only send data to analyzer if not silent
-        if (!isSilent)
-        {
-            analyzer.pushBuffer(buffer.getReadPointer(0), buffer.getNumSamples());
-        }
-    }
-
     updateReverbParams();
 
+    // Process reverb
     juce::dsp::AudioBlock<float> block (buffer);
     juce::dsp::ProcessContextReplacing ctx (block);
     reverb.process (ctx);
+
+    // Push audio data to analyzer
+    if (buffer.getNumChannels() > 0)
+    {
+        analyzer.pushBuffer(buffer.getReadPointer(0), buffer.getNumSamples());
+    }
 }
 
 bool PluginProcessor::hasEditor() const

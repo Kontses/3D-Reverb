@@ -9,12 +9,15 @@ class SpectrumAnalyzer : public juce::Component,
 public:
     SpectrumAnalyzer() : forwardFFT(fftOrder),
                          window(fftSize, juce::dsp::WindowingFunction<float>::hann),
-                         fifo(fftSize, 0.0f),
-                         fftData(2 * fftSize, 0.0f),
-                         scopeData(numPoints, 0.0f),
-                         freqPoints(numPoints, 0.0f),
-                         previousScope(numPoints, 0.0f)
+                         sampleRate(44100.0f)  // Default sample rate
     {
+        // Initialize vectors with proper size and values
+        fifo.resize(fftSize, 0.0f);
+        fftData.resize(2 * fftSize, 0.0f);
+        scopeData.resize(numPoints, 0.0f);
+        freqPoints.resize(numPoints, 0.0f);
+        previousScope.resize(numPoints, 0.0f);
+
         setOpaque(true);
         startTimerHz(30);
         
@@ -34,23 +37,37 @@ public:
         // Acquire lock to ensure no timer callback is running
         const juce::SpinLock::ScopedLockType lock(mutex);
         
-        // Clear all buffers
+        // Clear all buffers safely
         fifo.clear();
+        fifo.shrink_to_fit();
         fftData.clear();
+        fftData.shrink_to_fit();
         scopeData.clear();
+        scopeData.shrink_to_fit();
         freqPoints.clear();
+        freqPoints.shrink_to_fit();
+        previousScope.clear();
+        previousScope.shrink_to_fit();
         
         // Make sure we're not processing anything
         nextFFTBlockReady = false;
         fifoIndex = 0;
     }
 
+    void setSampleRate(float newSampleRate)
+    {
+        const juce::SpinLock::ScopedLockType lock(mutex);
+        sampleRate = newSampleRate;
+    }
+
     void pushBuffer(const float* data, int numSamples)
     {
-        if (data != nullptr && numSamples > 0)
-        {
-            const juce::SpinLock::ScopedLockType lock(mutex);
-            
+        if (data == nullptr || numSamples <= 0)
+            return;
+
+        const juce::SpinLock::ScopedLockType lock(mutex);
+        
+        try {
             // Clear any old data first
             if (fifoIndex == 0)
             {
@@ -70,21 +87,24 @@ public:
             fifoIndex = (fifoIndex + numSamples) % fftSize;
             nextFFTBlockReady = true;
         }
+        catch (const std::exception& e) {
+            DBG("Error in pushBuffer: " << e.what());
+        }
     }
 
     void paint(juce::Graphics& g) override
     {
         const juce::SpinLock::ScopedLockType lock(mutex);
-        
+
         g.fillAll(juce::Colour(0xff1a1a1a));
-        
+
         const auto bounds = getLocalBounds().toFloat();
         const auto width = bounds.getWidth();
         const auto height = bounds.getHeight();
 
         // Draw grid with more subtle appearance
         g.setColour(juce::Colours::darkgrey.withAlpha(0.3f));
-        
+
         // Vertical lines for frequencies
         const float freqs[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
         for (auto freq : freqs)
@@ -100,7 +120,7 @@ public:
         }
         
         // Horizontal lines for dB scale
-        for (int db = -60; db <= 0; db += 12)
+        for (int db = -30; db <= 0; db += 6)
         {
             const float y = dbToY(static_cast<float>(db), height);
             g.drawHorizontalLine(static_cast<int>(y), 0.0f, width);
@@ -112,7 +132,7 @@ public:
         }
 
         // Draw spectrum
-        g.setColour(juce::Colour(0xff9400ff)); // Purple color
+        g.setColour(juce::Colours::cyan);
         
         juce::Path smoothPath;
         smoothPath.startNewSubPath(0.0f, height);
@@ -120,14 +140,25 @@ public:
         // Create a temporary array for smoothed points
         std::vector<float> smoothedLevels(numPoints);
         
-        // First pass: Calculate initial levels
+        // Calculate dB levels with proper scaling
+        const float minDB = -30.0f;
+        const float maxDB = 0.0f;
+        
         for (int i = 0; i < numPoints; ++i)
         {
-            smoothedLevels[i] = juce::Decibels::gainToDecibels(scopeData[i] * 0.015f);
+            const float magnitude = scopeData[i];
+            if (magnitude > 0.0f)
+            {
+                smoothedLevels[i] = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(magnitude));
+            }
+            else
+            {
+                smoothedLevels[i] = minDB;
+            }
         }
         
-        // Second pass: Apply gaussian smoothing
-        const int smoothingRange = 5;  // Increased smoothing range
+        // Apply gaussian smoothing
+        const int smoothingRange = 5;
         std::vector<float> tempLevels = smoothedLevels;
         for (int i = 0; i < numPoints; ++i)
         {
@@ -139,7 +170,6 @@ public:
                 int index = i + j;
                 if (index >= 0 && index < numPoints)
                 {
-                    // Gaussian weight
                     float weight = std::exp(-0.5f * (j * j) / (smoothingRange * smoothingRange));
                     sum += tempLevels[index] * weight;
                     weightSum += weight;
@@ -151,7 +181,7 @@ public:
 
         // Draw the smoothed curve
         const float x0 = freqToX(freqPoints[0], width);
-        const float level0 = juce::jlimit(-60.0f, 0.0f, smoothedLevels[0]);
+        const float level0 = juce::jlimit(minDB, maxDB, smoothedLevels[0]);
         const float y0 = dbToY(level0, height);
         smoothPath.startNewSubPath(x0, y0);
         
@@ -159,9 +189,9 @@ public:
         for (int i = 1; i < numPoints; ++i)
         {
             const float x = freqToX(freqPoints[i], width);
-            const float level = juce::jlimit(-60.0f, 0.0f, smoothedLevels[i]);
+            const float level = juce::jlimit(minDB, maxDB, smoothedLevels[i]);
             const float y = dbToY(level, height);
-            
+
             // Use quadratic curves for smoother interpolation
             if (i > 1)
             {
@@ -174,7 +204,7 @@ public:
                 smoothPath.lineTo(x, y);
             }
         }
-        
+
         // Complete the path
         smoothPath.lineTo(width, height);
         smoothPath.lineTo(0.0f, height);
@@ -182,23 +212,23 @@ public:
         
         // Fill with gradient
         juce::ColourGradient gradient(
-            juce::Colour(0xff9400ff).withAlpha(0.8f), 0.0f, 0.0f,
-            juce::Colour(0xff9400ff).withAlpha(0.2f), 0.0f, height,
+            juce::Colours::cyan.withAlpha(0.5f), 0.0f, 0.0f,
+            juce::Colours::cyan.withAlpha(0.2f), 0.0f, height,
             false);
         g.setGradientFill(gradient);
         g.fillPath(smoothPath);
         
         // Draw the line on top
-        g.setColour(juce::Colour(0xff9400ff));
+        g.setColour(juce::Colours::cyan);
         g.strokePath(smoothPath, juce::PathStrokeType(2.0f));
     }
 
     void resized() override {}
 
 private:
-    static constexpr auto fftOrder = 13;           // 8192 points (increased from 11/2048)
-    static constexpr auto fftSize = 1 << fftOrder; // 8192
-    static constexpr auto numPoints = 1024;        // Points in our spectrum (increased from 512)
+    static constexpr auto fftOrder = 13;
+    static constexpr auto fftSize = 1 << fftOrder;
+    static constexpr auto numPoints = 1024;
 
     juce::dsp::FFT forwardFFT;
     juce::dsp::WindowingFunction<float> window;
@@ -210,6 +240,7 @@ private:
     std::vector<float> previousScope;
     int fifoIndex = 0;
     bool nextFFTBlockReady = false;
+    float sampleRate;  // Sample rate member variable
     
     juce::SpinLock mutex;
 
@@ -219,79 +250,95 @@ private:
         
         if (nextFFTBlockReady)
         {
-            // Copy fifo into fftData array
-            juce::FloatVectorOperations::copy(fftData.data(), fifo.data(), fftSize);
-            
-            // Clear the FIFO buffer after copying
-            std::fill(fifo.begin(), fifo.end(), 0.0f);
-            fifoIndex = 0;
-            
-            // Apply window to the data
-            window.multiplyWithWindowingTable(fftData.data(), fftSize);
-            
-            // Perform FFT
-            forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());
+            try {
+                // Apply window to the FFT input data
+                window.multiplyWithWindowingTable(fifo.data(), fftSize);
 
-            // Find maximum magnitude for normalization
-            float maxMagnitude = 1.0e-10f;
-            for (int i = 0; i < fftSize/2; ++i)
-            {
-                maxMagnitude = juce::jmax(maxMagnitude, fftData[i]);
-            }
-            
-            // Convert to spectrum data with logarithmic frequency scale
-            for (int i = 0; i < numPoints; ++i)
-            {
-                const float freq = freqPoints[i];
-                const int fftIndex = static_cast<int>(freq * static_cast<float>(fftSize) / 44100.0f);
-                
-                if (fftIndex < fftSize/2)
+                // Copy windowed data to FFT input buffer
+                juce::FloatVectorOperations::copy(fftData.data(), fifo.data(), fftSize);
+
+                // Perform FFT
+                forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());
+
+                // Process each frequency point
+                for (int i = 0; i < numPoints; ++i)
                 {
-                    // Use wider range for averaging in lower frequencies
-                    int range = 3;
-                    if (freq < 100.0f)
-                        range = 7;
-                    else if (freq < 500.0f)
-                        range = 5;
+                    const float freq = freqPoints[i];
                     
-                    float sum = 0.0f;
-                    int count = 0;
+                    // Calculate the frequency band for this point
+                    const float bandwidthFactor = 0.3f; // Bandwidth for frequency averaging
+                    const float lowerFreq = freq / (1.0f + bandwidthFactor);
+                    const float upperFreq = freq * (1.0f + bandwidthFactor);
                     
-                    // Weighted average with gaussian window
-                    for (int j = -range; j <= range; ++j)
+                    // Convert frequencies to FFT bins
+                    const int lowerBin = static_cast<int>(lowerFreq * fftSize / sampleRate);
+                    const int upperBin = static_cast<int>(upperFreq * fftSize / sampleRate);
+                    
+                    // Calculate RMS value for the frequency band
+                    float sumSquared = 0.0f;
+                    int numBins = 0;
+                    
+                    for (int bin = lowerBin; bin <= upperBin && bin < fftSize / 2; ++bin)
                     {
-                        const int index = fftIndex + j;
-                        if (index >= 0 && index < fftSize/2)
+                        if (bin >= 0)
                         {
-                            float weight = std::exp(-0.5f * (j * j) / (range * range));
-                            sum += (fftData[index] / maxMagnitude) * weight;
-                            count += weight;
+                            const float binFreq = bin * sampleRate / fftSize;
+                            
+                            // Calculate weight based on distance from center frequency
+                            const float distanceOctaves = std::abs(std::log2(binFreq / freq));
+                            const float weight = std::exp(-distanceOctaves * distanceOctaves * 4.0f);
+                            
+                            const float magnitude = std::sqrt(fftData[bin] * fftData[bin]);
+                            sumSquared += magnitude * magnitude * weight;
+                            numBins++;
                         }
                     }
                     
-                    float magnitude = (count > 0.0f) ? (sum / count) * 1.2f : 0.0f;
+                    // Calculate the average magnitude
+                    float magnitude = numBins > 0 ? std::sqrt(sumSquared / numBins) : 0.0f;
                     
-                    // Apply spectral tilt (4.5 dB/octave around 1kHz)
-                    const float tiltDB = 4.5f * std::log2(freq / 1000.0f);  // Tilt relative to 1kHz
-                    const float tiltGain = std::pow(10.0f, tiltDB / 20.0f);  // Convert dB to gain
-                    magnitude *= tiltGain;
+                    // Apply normalization with increased scaling
+                    magnitude *= 6.0f / fftSize;
                     
-                    scopeData[i] = magnitude;
+                    // Convert to dB
+                    float db = magnitude > 0.0f ? juce::Decibels::gainToDecibels(magnitude) : -100.0f;
+                    
+                    // Apply tilt (4.5 dB/octave around 1kHz)
+                    const float octavesFrom1k = std::log2(freq / 1000.0f);
+                    const float tiltDb = 4.5f * octavesFrom1k;
+                    db += tiltDb;
+                    
+                    // Convert back to linear magnitude
+                    magnitude = juce::Decibels::decibelsToGain(db);
+                    
+                    // Apply frequency-dependent scaling
+                    float freqScaling = 1.0f;
+                    
+                    // Boost frequencies above 100 Hz with gradual increase
+                    if (freq > 100.0f)
+                    {
+                        // Logarithmic scaling from 100Hz to 20kHz
+                        const float octavesAbove100 = std::log2(freq / 100.0f);
+                        freqScaling = 1.0f + (octavesAbove100 * 0.8f);
+                    }
+                    
+                    magnitude *= freqScaling * 3.0f;
+                    
+                    // Apply temporal smoothing with adaptive factor
+                    float smoothingFactor = 0.85f;
+                    if (magnitude < scopeData[i]) // Faster decay
+                        smoothingFactor = 0.75f;
+                        
+                    scopeData[i] = scopeData[i] * smoothingFactor + magnitude * (1.0f - smoothingFactor);
                 }
+
+                nextFFTBlockReady = false;
+                repaint();
             }
-            
-            nextFFTBlockReady = false;
+            catch (const std::exception& e) {
+                DBG("Error in timerCallback: " << e.what());
+            }
         }
-        else
-        {
-            // Clear all buffers when no new data
-            std::fill(fifo.begin(), fifo.end(), 0.0f);
-            std::fill(fftData.begin(), fftData.end(), 0.0f);
-            std::fill(scopeData.begin(), scopeData.end(), 0.0f);
-            fifoIndex = 0;
-        }
-        
-        repaint();
     }
 
     float freqToX(float freq, float width) const
@@ -302,8 +349,8 @@ private:
 
     float dbToY(float db, float height) const
     {
-        // Convert dB to y coordinate
-        return height * (1.0f - (db + 60.0f) / 60.0f);
+        // Convert dB to y coordinate with new range (-30 to 0)
+        return height * (1.0f - (db + 30.0f) / 30.0f);  // Changed range to 30dB total
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumAnalyzer)

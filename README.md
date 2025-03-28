@@ -1,8 +1,8 @@
-# Simple Reverb
+# 3D Reverb
 
-This is a simple reverb plugin made with the JUCE DSP module.
+This is a 3D reverb plugin made with the JUCE DSP module.
 
-<img alt="Screenshot 2024-04-02 at 17 33 04" src="">
+<img alt="3D Reverb" src="res/3D-Reverb.png">
 
 ## UI Manual
 

@@ -6,9 +6,7 @@ PluginEditor::PluginEditor (PluginProcessor& p, juce::UndoManager& um)
     , processor (p)
     , undoManager (um)
     , editorContent (p, um)
-    , dampDial (editorContent.getDampDial())    // Use the getter method to access dampDial
-    , sizeDial (editorContent.getSizeDial())    // Use the getter method to access sizeDial
-    , widthDial (editorContent.getWidthDial())  // Use the getter method to access widthDial
+    , numericInputFilter(0.0f, 100.0f, 2)  // min=0, max=100, 2 decimal places
 {
     constexpr auto ratio = static_cast<double> (defaultWidth) / defaultHeight;
     setResizable (false, true);
@@ -84,6 +82,12 @@ void PluginEditor::paint (juce::Graphics& g)
 
 void PluginEditor::resized()
 {
+    auto bounds = getLocalBounds();
+    
+    // Make analyzer taller
+    const int analyzerHeight = 300;  // Αυξήσαμε το ύψος από το default
+    processor.getAnalyzer().setBounds(bounds.removeFromTop(analyzerHeight));
+    
     const auto factor = static_cast<float> (getWidth()) / defaultWidth;
     editorContent.setTransform (juce::AffineTransform::scale (factor));
 
@@ -102,9 +106,6 @@ void PluginEditor::resized()
         setSize(getWidth(), totalNeededHeight);
     }
     
-    // Position the visualizer at the top with no margin
-    processor.getAnalyzer().setBounds(0, 0, getWidth(), visualizerHeight);
-
     // Position the editor content (knobs) below the visualizer with spacing
     editorContent.setBounds(0, visualizerHeight + spacing, getWidth(), contentHeight);
 
@@ -136,21 +137,21 @@ void PluginEditor::textEditorTextChanged (juce::TextEditor& editor)
     }
     else if (&editor == &textBox1)
     {
-        dampDial.setParameterUpdatesEnabled(false);
+        editorContent.getDampDial().setParameterUpdatesEnabled(false);
         processor.damp->setValueNotifyingHost (editor.getText().getFloatValue() / 100.0f);
-        dampDial.setParameterUpdatesEnabled(true);
+        editorContent.getDampDial().setParameterUpdatesEnabled(true);
     }
     else if (&editor == &textBox2)
     {
-        sizeDial.setParameterUpdatesEnabled(false);
+        editorContent.getSizeDial().setParameterUpdatesEnabled(false);
         processor.size->setValueNotifyingHost (editor.getText().getFloatValue() / 100.0f);
-        sizeDial.setParameterUpdatesEnabled(true);
+        editorContent.getSizeDial().setParameterUpdatesEnabled(true);
     }
     else if (&editor == &textBox3)
     {
-        widthDial.setParameterUpdatesEnabled(false);
+        editorContent.getWidthDial().setParameterUpdatesEnabled(false);
         processor.width->setValueNotifyingHost (editor.getText().getFloatValue() / 100.0f);
-        widthDial.setParameterUpdatesEnabled(true);
+        editorContent.getWidthDial().setParameterUpdatesEnabled(true);
     }
 }
 
@@ -169,4 +170,25 @@ bool PluginEditor::keyPressed (const juce::KeyPress& k)
     return false;
 }
 
-PluginEditor::~PluginEditor() {}
+PluginEditor::~PluginEditor()
+{
+    // First, stop any processing
+    processor.suspendProcessing(true);
+    
+    // Remove listeners before destruction
+    textBox1.removeListener(this);
+    textBox2.removeListener(this);
+    textBox3.removeListener(this);
+    
+    // Clear look and feel references
+    editorContent.getDampDial().setLookAndFeel(nullptr);
+    editorContent.getSizeDial().setLookAndFeel(nullptr);
+    editorContent.getWidthDial().setLookAndFeel(nullptr);
+    
+    // Remove child components in reverse order of addition
+    removeChildComponent(&processor.getAnalyzer());
+    removeChildComponent(&editorContent);
+    
+    // Resume processing
+    processor.suspendProcessing(false);
+}
