@@ -9,6 +9,7 @@ class PluginProcessor final : public juce::AudioProcessor
 {
 public:
     PluginProcessor();
+    ~PluginProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -36,13 +37,20 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    juce::AudioProcessorValueTreeState& getPluginState();
+    juce::AudioProcessorValueTreeState& getPluginState() { return apvts; }
     SpectrumAnalyzer& getAnalyzer() { return analyzer; }
 
     // Make public
     juce::AudioParameterFloat* damp { nullptr };
     juce::AudioParameterFloat* size { nullptr };
     juce::AudioParameterFloat* width { nullptr };
+
+    // Parameter change tracking
+    float lastSize = 0.0f;
+    float lastDamp = 0.0f;
+    float lastWidth = 0.0f;
+    float lastMix = 0.0f;
+    bool lastFreeze = false;
 
 private:
     juce::AudioProcessorValueTreeState apvts;

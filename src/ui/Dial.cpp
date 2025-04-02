@@ -22,7 +22,7 @@ Dial::Dial (juce::RangedAudioParameter& param, juce::UndoManager* um)
     {
         const auto newNormValue = audioParam.getValueForText (textBox.getText());
         const auto newDenormValue = audioParam.convertFrom0to1 (newNormValue);
-        paramAttachment.setValueAsCompleteGesture (newDenormValue);
+        paramAttachment.setValueAsPartOfGesture (newDenormValue);
         textBox.setText (audioParam.getCurrentValueAsText(), juce::NotificationType::dontSendNotification);
     };
 

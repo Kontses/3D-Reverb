@@ -72,6 +72,18 @@ PluginProcessor::PluginProcessor()
     castParameter (ParamIDs::width, width);
     castParameter (ParamIDs::mix, mix);
     castParameter (ParamIDs::freeze, freeze);
+
+    // Initialize parameter change tracking
+    lastSize = size->get() * 0.01f;
+    lastDamp = damp->get() * 0.01f;
+    lastWidth = width->get() * 0.01f;
+    lastMix = mix->get() * 0.01f;
+    lastFreeze = freeze->get();
+}
+
+PluginProcessor::~PluginProcessor()
+{
+    // Destructor implementation
 }
 
 const juce::String PluginProcessor::getName() const { return JucePlugin_Name; }
@@ -129,7 +141,6 @@ void PluginProcessor::changeProgramName (int index, const juce::String& newName)
 void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     juce::dsp::ProcessSpec spec {};
-
     spec.sampleRate = sampleRate;
     spec.maximumBlockSize = static_cast<juce::uint32> (samplesPerBlock);
     spec.numChannels = static_cast<juce::uint32> (getTotalNumOutputChannels());
@@ -158,14 +169,33 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 
 void PluginProcessor::updateReverbParams()
 {
-    params.roomSize = size->get() * 0.01f;
-    params.damping = damp->get() * 0.01f;
-    params.width = width->get() * 0.01f;
-    params.wetLevel = mix->get() * 0.01f;
-    params.dryLevel = 1.0f - mix->get() * 0.01f;
-    params.freezeMode = freeze->get();
+    const float currentSize = size->get() * 0.01f;
+    const float currentDamp = damp->get() * 0.01f;
+    const float currentWidth = width->get() * 0.01f;
+    const float currentMix = mix->get() * 0.01f;
+    const bool currentFreeze = freeze->get();
 
-    reverb.setParameters (params);
+    // Only update parameters if they've changed
+    if (currentSize != lastSize || currentDamp != lastDamp || 
+        currentWidth != lastWidth || currentMix != lastMix || 
+        currentFreeze != lastFreeze)
+    {
+        params.roomSize = currentSize;
+        params.damping = currentDamp;
+        params.width = currentWidth;
+        params.wetLevel = currentMix;
+        params.dryLevel = 1.0f - currentMix;
+        params.freezeMode = currentFreeze;
+
+        reverb.setParameters(params);
+
+        // Update last values
+        lastSize = currentSize;
+        lastDamp = currentDamp;
+        lastWidth = currentWidth;
+        lastMix = currentMix;
+        lastFreeze = currentFreeze;
+    }
 }
 
 void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -175,13 +205,18 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 
     updateReverbParams();
 
-    // Process reverb
+    // Process reverb with proper buffer handling
     juce::dsp::AudioBlock<float> block (buffer);
     juce::dsp::ProcessContextReplacing ctx (block);
-    reverb.process (ctx);
+    
+    // Ensure buffer is properly sized
+    if (block.getNumSamples() > 0)
+    {
+        reverb.process (ctx);
+    }
 
-    // Push audio data to analyzer
-    if (buffer.getNumChannels() > 0)
+    // Push audio data to analyzer only if we have valid data
+    if (buffer.getNumChannels() > 0 && buffer.getNumSamples() > 0)
     {
         analyzer.pushBuffer(buffer.getReadPointer(0), buffer.getNumSamples());
     }
@@ -205,8 +240,6 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (const auto tree = juce::ValueTree::readFromData (data, static_cast<size_t> (sizeInBytes)); tree.isValid())
         apvts.replaceState (tree);
 }
-
-juce::AudioProcessorValueTreeState& PluginProcessor::getPluginState() { return apvts; }
 
 // This creates new instances of the plugin..
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new PluginProcessor(); }

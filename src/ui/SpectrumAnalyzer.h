@@ -74,18 +74,21 @@ public:
                 std::fill(fifo.begin(), fifo.end(), 0.0f);
             }
             
-            const int start1 = 0;
-            const int size1 = juce::jmin(numSamples, fftSize - fifoIndex);
-            const int size2 = numSamples - size1;
-
-            if (size1 > 0)
-                juce::FloatVectorOperations::copy(fifo.data() + fifoIndex, data + start1, size1);
-
-            if (size2 > 0)
-                juce::FloatVectorOperations::copy(fifo.data(), data + start1 + size1, size2);
-
-            fifoIndex = (fifoIndex + numSamples) % fftSize;
-            nextFFTBlockReady = true;
+            // Handle buffer overflow gracefully
+            const int maxSamples = fftSize - fifoIndex;
+            const int samplesToCopy = juce::jmin(numSamples, maxSamples);
+            
+            if (samplesToCopy > 0)
+            {
+                juce::FloatVectorOperations::copy(fifo.data() + fifoIndex, data, samplesToCopy);
+                fifoIndex = (fifoIndex + samplesToCopy) % fftSize;
+                
+                // If we have enough samples, trigger FFT
+                if (fifoIndex == 0)
+                {
+                    nextFFTBlockReady = true;
+                }
+            }
         }
         catch (const std::exception& e) {
             DBG("Error in pushBuffer: " << e.what());
@@ -226,118 +229,50 @@ public:
     void resized() override {}
 
 private:
-    static constexpr auto fftOrder = 13;
-    static constexpr auto fftSize = 1 << fftOrder;
-    static constexpr auto numPoints = 1024;
+    static constexpr int fftOrder = 10;  // Reduced from 11 to 10 for smaller FFT size
+    static constexpr int fftSize = 1 << fftOrder;  // Now 1024 instead of 2048
+    static constexpr int numPoints = 200;
 
     juce::dsp::FFT forwardFFT;
     juce::dsp::WindowingFunction<float> window;
-
     std::vector<float> fifo;
     std::vector<float> fftData;
     std::vector<float> scopeData;
     std::vector<float> freqPoints;
     std::vector<float> previousScope;
+    
+    float sampleRate;
     int fifoIndex = 0;
     bool nextFFTBlockReady = false;
-    float sampleRate;  // Sample rate member variable
-    
     juce::SpinLock mutex;
 
     void timerCallback() override
     {
-        const juce::SpinLock::ScopedLockType lock(mutex);
-        
         if (nextFFTBlockReady)
         {
-            try {
-                // Apply window to the FFT input data
-                window.multiplyWithWindowingTable(fifo.data(), fftSize);
-
-                // Copy windowed data to FFT input buffer
-                juce::FloatVectorOperations::copy(fftData.data(), fifo.data(), fftSize);
-
-                // Perform FFT
-                forwardFFT.performFrequencyOnlyForwardTransform(fftData.data());
-
-                // Process each frequency point
-                for (int i = 0; i < numPoints; ++i)
+            const juce::SpinLock::ScopedLockType lock(mutex);
+            
+            // Apply window function
+            window.multiplyWithWindowingTable(fifo.data(), fftSize);
+            
+            // Perform FFT
+            forwardFFT.performRealOnlyForwardTransform(fftData.data());
+            
+            // Calculate magnitudes
+            for (int i = 0; i < numPoints; ++i)
+            {
+                const float freq = freqPoints[i];
+                const int binIndex = static_cast<int>(freq * fftSize / sampleRate);
+                
+                if (binIndex >= 0 && binIndex < fftSize / 2)
                 {
-                    const float freq = freqPoints[i];
-                    
-                    // Calculate the frequency band for this point
-                    const float bandwidthFactor = 0.3f; // Bandwidth for frequency averaging
-                    const float lowerFreq = freq / (1.0f + bandwidthFactor);
-                    const float upperFreq = freq * (1.0f + bandwidthFactor);
-                    
-                    // Convert frequencies to FFT bins
-                    const int lowerBin = static_cast<int>(lowerFreq * fftSize / sampleRate);
-                    const int upperBin = static_cast<int>(upperFreq * fftSize / sampleRate);
-                    
-                    // Calculate RMS value for the frequency band
-                    float sumSquared = 0.0f;
-                    int numBins = 0;
-                    
-                    for (int bin = lowerBin; bin <= upperBin && bin < fftSize / 2; ++bin)
-                    {
-                        if (bin >= 0)
-                        {
-                            const float binFreq = bin * sampleRate / fftSize;
-                            
-                            // Calculate weight based on distance from center frequency
-                            const float distanceOctaves = std::abs(std::log2(binFreq / freq));
-                            const float weight = std::exp(-distanceOctaves * distanceOctaves * 4.0f);
-                            
-                            const float magnitude = std::sqrt(fftData[bin] * fftData[bin]);
-                            sumSquared += magnitude * magnitude * weight;
-                            numBins++;
-                        }
-                    }
-                    
-                    // Calculate the average magnitude
-                    float magnitude = numBins > 0 ? std::sqrt(sumSquared / numBins) : 0.0f;
-                    
-                    // Apply normalization with increased scaling
-                    magnitude *= 6.0f / fftSize;
-                    
-                    // Convert to dB
-                    float db = magnitude > 0.0f ? juce::Decibels::gainToDecibels(magnitude) : -100.0f;
-                    
-                    // Apply tilt (4.5 dB/octave around 1kHz)
-                    const float octavesFrom1k = std::log2(freq / 1000.0f);
-                    const float tiltDb = 4.5f * octavesFrom1k;
-                    db += tiltDb;
-                    
-                    // Convert back to linear magnitude
-                    magnitude = juce::Decibels::decibelsToGain(db);
-                    
-                    // Apply frequency-dependent scaling
-                    float freqScaling = 1.0f;
-                    
-                    // Boost frequencies above 100 Hz with gradual increase
-                    if (freq > 100.0f)
-                    {
-                        // Logarithmic scaling from 100Hz to 20kHz
-                        const float octavesAbove100 = std::log2(freq / 100.0f);
-                        freqScaling = 1.0f + (octavesAbove100 * 0.8f);
-                    }
-                    
-                    magnitude *= freqScaling * 3.0f;
-                    
-                    // Apply temporal smoothing with adaptive factor
-                    float smoothingFactor = 0.85f;
-                    if (magnitude < scopeData[i]) // Faster decay
-                        smoothingFactor = 0.75f;
-                        
-                    scopeData[i] = scopeData[i] * smoothingFactor + magnitude * (1.0f - smoothingFactor);
+                    const float magnitude = std::sqrt(fftData[binIndex] * fftData[binIndex]);
+                    scopeData[i] = magnitude;
                 }
-
-                nextFFTBlockReady = false;
-                repaint();
             }
-            catch (const std::exception& e) {
-                DBG("Error in timerCallback: " << e.what());
-            }
+            
+            nextFFTBlockReady = false;
+            repaint();
         }
     }
 
