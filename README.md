@@ -2,8 +2,6 @@
 
 This is a 3D reverb plugin made with the JUCE DSP module.
 
-<img alt="3D Reverb" src="res/3D-Reverb.png">
-
 ## UI Manual
 
 - value changes: dragging or arrow keys
