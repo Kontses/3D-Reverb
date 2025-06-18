@@ -2,17 +2,6 @@
 
 This is a 3D reverb plugin made with the JUCE DSP module.
 
-<img alt="3D Reverb" src="res/3D-Reverb.png">
-
-## UI Manual
-
-- value changes: dragging or arrow keys
-- fine mode: shift + dragging or shift + arrow keys
-- edit mode: 0-9
-- undo: cmd + z
-- redo: cmd + shift + z
-- reset: double click
-
 ## Building
 
 ```
@@ -21,3 +10,8 @@ $ cd 3D-Reverb
 $ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 $ cmake --build build --config Release
 ```
+
+## VTS3 file
+
+The VST3 file is located in the `\out\build\x64-Debug\3d_reverb_artefacts\Debug\VST3\3d_reverb.vst3\Contents\x86_64-win` directory.
+You can copy it to your VST3 plugins directory.
