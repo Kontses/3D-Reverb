@@ -66,32 +66,17 @@ public:
             return;
 
         const juce::SpinLock::ScopedLockType lock(mutex);
-        
-        try {
-            // Clear any old data first
-            if (fifoIndex == 0)
+
+        // Copy samples to the fifo buffer
+        for (int i = 0; i < numSamples; ++i)
+        {
+            fifo[fifoIndex] = data[i]; // Write current sample
+            fifoIndex = (fifoIndex + 1) % fftSize; // Move to next position, wrapping around
+
+            if (fifoIndex == 0) // If we wrapped around, a full FFT block is ready
             {
-                std::fill(fifo.begin(), fifo.end(), 0.0f);
+                nextFFTBlockReady = true;
             }
-            
-            // Handle buffer overflow gracefully
-            const int maxSamples = fftSize - fifoIndex;
-            const int samplesToCopy = juce::jmin(numSamples, maxSamples);
-            
-            if (samplesToCopy > 0)
-            {
-                juce::FloatVectorOperations::copy(fifo.data() + fifoIndex, data, samplesToCopy);
-                fifoIndex = (fifoIndex + samplesToCopy) % fftSize;
-                
-                // If we have enough samples, trigger FFT
-                if (fifoIndex == 0)
-                {
-                    nextFFTBlockReady = true;
-                }
-            }
-        }
-        catch (const std::exception& e) {
-            DBG("Error in pushBuffer: " << e.what());
         }
     }
 
@@ -123,7 +108,7 @@ public:
         }
         
         // Horizontal lines for dB scale
-        for (int db = -30; db <= 0; db += 6)
+        for (int db = -90; db <= 0; db += 6)
         {
             const float y = dbToY(static_cast<float>(db), height);
             g.drawHorizontalLine(static_cast<int>(y), 0.0f, width);
@@ -144,7 +129,7 @@ public:
         std::vector<float> smoothedLevels(numPoints);
         
         // Calculate dB levels with proper scaling
-        const float minDB = -30.0f;
+        const float minDB = -90.0f;
         const float maxDB = 0.0f;
         
         for (int i = 0; i < numPoints; ++i)
@@ -152,7 +137,7 @@ public:
             const float magnitude = scopeData[i];
             if (magnitude > 0.0f)
             {
-                smoothedLevels[i] = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(magnitude));
+                smoothedLevels[i] = juce::jlimit(minDB, maxDB, juce::Decibels::gainToDecibels(magnitude) + displayOffsetDB);
             }
             else
             {
@@ -229,9 +214,10 @@ public:
     void resized() override {}
 
 private:
-    static constexpr int fftOrder = 10;  // Reduced from 11 to 10 for smaller FFT size
-    static constexpr int fftSize = 1 << fftOrder;  // Now 1024 instead of 2048
-    static constexpr int numPoints = 200;
+    static constexpr int fftOrder = 13;  // Reverted to 13 for better resolution
+    static constexpr int fftSize = 1 << fftOrder; // Now 8192
+    static constexpr int numPoints = 1024; // Increased for better resolution and mapping
+    static constexpr float decayFactor = 0.7f;
 
     juce::dsp::FFT forwardFFT;
     juce::dsp::WindowingFunction<float> window;
@@ -245,33 +231,68 @@ private:
     int fifoIndex = 0;
     bool nextFFTBlockReady = false;
     juce::SpinLock mutex;
+    float displayOffsetDB = -60.0f; // Changed to -60.0f for more offset
 
     void timerCallback() override
     {
+        // Acquire lock for thread safety
+        const juce::SpinLock::ScopedLockType lock(mutex);
+
+        // Only perform FFT if a new block is ready
         if (nextFFTBlockReady)
         {
-            const juce::SpinLock::ScopedLockType lock(mutex);
-            
-            // Apply window function
-            window.multiplyWithWindowingTable(fifo.data(), fftSize);
-            
-            // Perform FFT
+            // Copy fifo data to fftData, then apply windowing
+            juce::FloatVectorOperations::copy(fftData.data(), fifo.data(), fftSize);
+            window.multiplyWithWindowingTable(fftData.data(), fftSize);
+
+            // Perform forward FFT
             forwardFFT.performRealOnlyForwardTransform(fftData.data());
+
+            // Reset the flag immediately to avoid re-processing the same data
+            nextFFTBlockReady = false;
+
+            // Process FFT data to get magnitudes
+            std::vector<float> currentMagnitudes(fftSize / 2 + 1);
+
+            currentMagnitudes[0] = fftData[0];
+            if (fftSize > 1)
+                currentMagnitudes[fftSize / 2] = fftData[1];
+
+            for (int i = 1; i < fftSize / 2; ++i)
+            {
+                currentMagnitudes[i] = std::sqrt(fftData[i * 2] * fftData[i * 2] +
+                                                 fftData[i * 2 + 1] * fftData[i * 2 + 1]);
+            }
             
-            // Calculate magnitudes
+            // Map raw magnitudes to scopeData (logarithmic frequency scale)
+            // and apply smoothing/decay
+            const float binWidth = sampleRate / fftSize;
+
             for (int i = 0; i < numPoints; ++i)
             {
                 const float freq = freqPoints[i];
-                const int binIndex = static_cast<int>(freq * fftSize / sampleRate);
-                
-                if (binIndex >= 0 && binIndex < fftSize / 2)
+                const int bin = static_cast<int>(freq / binWidth);
+
+                if (bin >= 0 && bin < currentMagnitudes.size())
                 {
-                    const float magnitude = std::sqrt(fftData[binIndex] * fftData[binIndex]);
-                    scopeData[i] = magnitude;
+                    scopeData[i] = juce::jmax(currentMagnitudes[bin], previousScope[i] * decayFactor);
+                }
+                else
+                {
+                    scopeData[i] = previousScope[i] * decayFactor;
                 }
             }
-            
-            nextFFTBlockReady = false;
+
+            juce::FloatVectorOperations::copy(previousScope.data(), scopeData.data(), numPoints);
+            repaint();
+        }
+        else // If no new block is ready, apply decay only
+        {
+            for (int i = 0; i < numPoints; ++i)
+            {
+                scopeData[i] = previousScope[i] * decayFactor;
+            }
+            juce::FloatVectorOperations::copy(previousScope.data(), scopeData.data(), numPoints);
             repaint();
         }
     }
@@ -284,8 +305,8 @@ private:
 
     float dbToY(float db, float height) const
     {
-        // Convert dB to y coordinate with new range (-30 to 0)
-        return height * (1.0f - (db + 30.0f) / 30.0f);  // Changed range to 30dB total
+        // Convert dB to y coordinate with new range (-90 to 0)
+        return height * (1.0f - (db + 90.0f) / 90.0f);  // Changed range to 90dB total
     }
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpectrumAnalyzer)
